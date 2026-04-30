@@ -1,12 +1,10 @@
 .app-shell {
   min-height: 100vh;
-  display: grid;
-  place-items: center;
   padding: 2rem;
 }
 
 .hero-panel {
-  width: min(100%, 48rem);
+  width: min(100%, 56rem);
   border: 1px solid var(--border);
   border-radius: 1.5rem;
   background:

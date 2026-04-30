@@ -32,7 +32,7 @@ type SearchTripCandidate = {
   trainNumber: string;
   trainName: string | null;
   routeId: string;
-  serviceDate: string;
+  serviceDate: string | Date;
   fromStopOrder: number;
   toStopOrder: number;
   fromDepartureOffsetMinutes: number | null;
@@ -485,11 +485,50 @@ export class TripsService {
     ).getCount();
   }
 
-  private buildTripDateTime(serviceDate: string, offsetMinutes: number) {
-    const date = new Date(`${serviceDate}T00:00:00.000Z`);
+  private buildTripDateTime(
+    serviceDate: string | Date,
+    offsetMinutes: number,
+  ) {
+    const date = this.buildServiceDateBase(serviceDate);
     date.setUTCMinutes(date.getUTCMinutes() + offsetMinutes);
 
     return date.toISOString();
+  }
+
+  private buildServiceDateBase(serviceDate: string | Date) {
+    if (serviceDate instanceof Date) {
+      const timestamp = serviceDate.getTime();
+
+      if (Number.isNaN(timestamp)) {
+        throw new BadRequestException('Trip service date is invalid');
+      }
+
+      return new Date(
+        Date.UTC(
+          serviceDate.getUTCFullYear(),
+          serviceDate.getUTCMonth(),
+          serviceDate.getUTCDate(),
+        ),
+      );
+    }
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(serviceDate)) {
+      return new Date(`${serviceDate}T00:00:00.000Z`);
+    }
+
+    const parsedDate = new Date(serviceDate);
+
+    if (Number.isNaN(parsedDate.getTime())) {
+      throw new BadRequestException('Trip service date is invalid');
+    }
+
+    return new Date(
+      Date.UTC(
+        parsedDate.getUTCFullYear(),
+        parsedDate.getUTCMonth(),
+        parsedDate.getUTCDate(),
+      ),
+    );
   }
 
   private buildStopArrivalTime(serviceDate: string, routeStop: RouteStop) {
