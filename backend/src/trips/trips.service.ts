@@ -14,6 +14,7 @@ import { SearchTripResultDto } from './dto/search-trip-result.dto';
 import { SearchTripsQueryDto } from './dto/search-trips-query.dto';
 import { TripDetailsDto } from './dto/trip-details.dto';
 import { TripRouteStopDto } from './dto/trip-route-stop.dto';
+import { TripSeatDto } from './dto/trip-seat.dto';
 import { TripSegmentQueryDto } from './dto/trip-segment-query.dto';
 
 export type TripSegmentResolution = {
@@ -400,8 +401,34 @@ export class TripsService {
                 trip.serviceDate,
                 routeStop.defaultDepartureOffsetMinutes,
               ),
+        isSelectedFrom: routeStop.stopOrder === segment.fromStopOrder,
+        isSelectedTo: routeStop.stopOrder === segment.toStopOrder,
+        isWithinSelectedSegment:
+          routeStop.stopOrder >= segment.fromStopOrder &&
+          routeStop.stopOrder <= segment.toStopOrder,
+        isDepartureLegSelected:
+          routeStop.stopOrder >= segment.fromStopOrder &&
+          routeStop.stopOrder < segment.toStopOrder,
       })),
     };
+  }
+
+  async getAvailableSeats(
+    tripId: string,
+    query: TripSegmentQueryDto,
+  ): Promise<TripSeatDto[]> {
+    const seats = await this.findAvailableSeatsForSegment(
+      tripId,
+      query.fromStationId,
+      query.toStationId,
+    );
+
+    return seats.map((seat) => ({
+      seatId: seat.id,
+      carNumber: seat.carNumber,
+      seatNumber: seat.seatNumber,
+      label: `${seat.carNumber}/${seat.seatNumber}`,
+    }));
   }
 
   private buildAvailableSeatsQuery(

@@ -9,6 +9,7 @@ import {
 import { SearchTripResultDto } from './dto/search-trip-result.dto';
 import { SearchTripsQueryDto } from './dto/search-trips-query.dto';
 import { TripDetailsDto } from './dto/trip-details.dto';
+import { TripSeatDto } from './dto/trip-seat.dto';
 import { TripSegmentQueryDto } from './dto/trip-segment-query.dto';
 import { TripsService } from './trips.service';
 
@@ -60,5 +61,29 @@ export class TripsController {
     @Query() query: TripSegmentQueryDto,
   ) {
     return this.tripsService.getTripDetails(tripId, query);
+  }
+
+  @Get(':tripId/seats')
+  @ApiOperation({
+    summary: 'List available seats for a selected trip segment',
+    description:
+      'Returns the currently available seats for one trip and one selected origin-to-destination segment.',
+  })
+  @ApiOkResponse({
+    description: 'Available seats for the selected trip segment.',
+    type: TripSeatDto,
+    isArray: true,
+  })
+  @ApiBadRequestResponse({
+    description: 'Invalid trip segment query parameters.',
+  })
+  @ApiNotFoundResponse({
+    description: 'Trip or one of the segment stations was not found.',
+  })
+  findAvailableSeats(
+    @Param('tripId', new ParseUUIDPipe()) tripId: string,
+    @Query() query: TripSegmentQueryDto,
+  ) {
+    return this.tripsService.getAvailableSeats(tripId, query);
   }
 }
