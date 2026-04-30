@@ -1,5 +1,6 @@
 import { ConfigService } from '@nestjs/config';
 import { TypeOrmModuleAsyncOptions } from '@nestjs/typeorm';
+import { databaseEntities } from './entities';
 
 export const databaseConfig: TypeOrmModuleAsyncOptions = {
   inject: [ConfigService],
@@ -8,7 +9,7 @@ export const databaseConfig: TypeOrmModuleAsyncOptions = {
     url:
       configService.get<string>('DATABASE_URL') ??
       'postgresql://postgres:postgres@localhost:5432/railway',
-    autoLoadEntities: true,
+    entities: databaseEntities,
     synchronize: false,
   }),
 };
