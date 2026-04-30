@@ -1,7 +1,9 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Booking, BookingItem, TrainSeat, Trip } from '../database/entities';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
+import { BookingCreatedDto } from './dto/booking-created.dto';
+import { CreateBookingDto } from './dto/create-booking.dto';
 import { TripsService } from '../trips/trips.service';
 
 export type BookingPriceCalculation = {
@@ -63,5 +65,72 @@ export class BookingsService {
       pricePerSeat,
       totalPrice,
     };
+  }
+
+  async createBooking(dto: CreateBookingDto): Promise<BookingCreatedDto> {
+    return this.bookingRepository.manager.transaction(async (manager) => {
+      const tripRepository = manager.getRepository(Trip);
+      const seatRepository = manager.getRepository(TrainSeat);
+      const bookingRepository = manager.getRepository(Booking);
+      const bookingItemRepository = manager.getRepository(BookingItem);
+
+      const price = await this.calculateBookingPrice({
+        tripId: dto.tripId,
+        fromStationId: dto.fromStationId,
+        toStationId: dto.toStationId,
+        seatCount: dto.seatIds.length,
+      });
+      const trip = await tripRepository.findOne({
+        where: { id: dto.tripId },
+      });
+
+      if (!trip) {
+        throw new NotFoundException(`Trip ${dto.tripId} was not found`);
+      }
+
+      const seats = await seatRepository.find({
+        where: {
+          id: In(dto.seatIds),
+          trainId: trip.trainId,
+        },
+      });
+
+      if (seats.length !== dto.seatIds.length) {
+        throw new BadRequestException(
+          'One or more selected seats do not belong to the trip train',
+        );
+      }
+
+      const booking = bookingRepository.create({
+        tripId: trip.id,
+        fromStationId: dto.fromStationId,
+        toStationId: dto.toStationId,
+        fromStopOrder: price.fromStopOrder,
+        toStopOrder: price.toStopOrder,
+        seatCount: dto.seatIds.length,
+        priceTotal: price.totalPrice.toFixed(2),
+        customerName: dto.customerName,
+        documentNumber: dto.documentNumber,
+        status: 'confirmed',
+      });
+      await bookingRepository.save(booking);
+
+      const bookingItems = bookingItemRepository.create(
+        dto.seatIds.map((seatId) => ({
+          bookingId: booking.id,
+          seatId,
+          price: price.pricePerSeat.toFixed(2),
+        })),
+      );
+      await bookingItemRepository.save(bookingItems);
+
+      return {
+        bookingId: booking.id,
+        tripId: trip.id,
+        seatCount: dto.seatIds.length,
+        totalPrice: price.totalPrice.toFixed(2),
+        seatIds: dto.seatIds,
+      };
+    });
   }
 }
