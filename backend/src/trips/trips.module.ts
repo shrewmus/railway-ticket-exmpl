@@ -5,6 +5,7 @@ import {
   BookingItem,
   Route,
   RouteStop,
+  Station,
   TrainSeat,
   Trip,
 } from '../database/entities';
@@ -17,6 +18,7 @@ import { TripsService } from './trips.service';
       Trip,
       Route,
       RouteStop,
+      Station,
       TrainSeat,
       Booking,
       BookingItem,

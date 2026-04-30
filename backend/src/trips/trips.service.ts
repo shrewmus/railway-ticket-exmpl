@@ -1,6 +1,14 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Booking, BookingItem, Route, RouteStop, TrainSeat, Trip } from '../database/entities';
+import {
+  Booking,
+  BookingItem,
+  Route,
+  RouteStop,
+  Station,
+  TrainSeat,
+  Trip,
+} from '../database/entities';
 import { SelectQueryBuilder, Repository } from 'typeorm';
 import { SearchTripResultDto } from './dto/search-trip-result.dto';
 import { SearchTripsQueryDto } from './dto/search-trips-query.dto';
@@ -23,6 +31,11 @@ type SearchTripCandidate = {
   serviceDate: string;
   fromStopOrder: number;
   toStopOrder: number;
+  fromDepartureOffsetMinutes: number | null;
+  fromArrivalOffsetMinutes: number | null;
+  toArrivalOffsetMinutes: number | null;
+  toDepartureOffsetMinutes: number | null;
+  pricePerSegment: string;
 };
 
 @Injectable()
@@ -34,6 +47,8 @@ export class TripsService {
     private readonly routeRepository: Repository<Route>,
     @InjectRepository(RouteStop)
     private readonly routeStopRepository: Repository<RouteStop>,
+    @InjectRepository(Station)
+    private readonly stationRepository: Repository<Station>,
     @InjectRepository(TrainSeat)
     private readonly trainSeatRepository: Repository<TrainSeat>,
     @InjectRepository(Booking)
@@ -166,16 +181,26 @@ export class TripsService {
       );
     }
 
+    await this.ensureStationsExist(
+      query.fromStationId,
+      query.toStationId,
+    );
+
     /*
       SELECT
         trip.id AS "tripId",
         trip.train_id AS "trainId",
         trip.route_id AS "routeId",
         trip.service_date AS "serviceDate",
+        trip.price_per_segment AS "pricePerSegment",
         train.number AS "trainNumber",
         train.name AS "trainName",
         "fromStop".stop_order AS "fromStopOrder",
-        "toStop".stop_order AS "toStopOrder"
+        "toStop".stop_order AS "toStopOrder",
+        "fromStop".default_departure_offset_minutes AS "fromDepartureOffsetMinutes",
+        "fromStop".default_arrival_offset_minutes AS "fromArrivalOffsetMinutes",
+        "toStop".default_arrival_offset_minutes AS "toArrivalOffsetMinutes",
+        "toStop".default_departure_offset_minutes AS "toDepartureOffsetMinutes"
         FROM trips trip
           INNER JOIN trains train ON train.id = trip.train_id
           INNER JOIN route_stops "fromStop"  ON "fromStop".route_id = trip.route_id  AND "fromStop".station_id = :fromStationId
@@ -209,41 +234,99 @@ export class TripsService {
         'trip.train_id AS "trainId"',
         'trip.route_id AS "routeId"',
         'trip.service_date AS "serviceDate"',
+        'trip.price_per_segment AS "pricePerSegment"',
         'train.number AS "trainNumber"',
         'train.name AS "trainName"',
         'fromStop.stop_order AS "fromStopOrder"',
         'toStop.stop_order AS "toStopOrder"',
+        'fromStop.default_departure_offset_minutes AS "fromDepartureOffsetMinutes"',
+        'fromStop.default_arrival_offset_minutes AS "fromArrivalOffsetMinutes"',
+        'toStop.default_arrival_offset_minutes AS "toArrivalOffsetMinutes"',
+        'toStop.default_departure_offset_minutes AS "toDepartureOffsetMinutes"',
       ])
       .orderBy('train.number', 'ASC')
       .getRawMany<SearchTripCandidate>();
 
     const matchingTrips = await Promise.all(
       candidates.map(async (candidate) => {
-        const availableSeatCount = await this.countAvailableSeatsForSegment(
+        const availableSeatCount = await this.countAvailableSeatsByOrders(
+          candidate.trainId,
           candidate.tripId,
-          query.fromStationId,
-          query.toStationId,
+          candidate.fromStopOrder,
+          candidate.toStopOrder,
         );
 
         if (availableSeatCount < query.seatCount) {
           return null;
         }
 
-        return candidate;
+        const segmentCount = candidate.toStopOrder - candidate.fromStopOrder;
+        const pricePerSeat = Number(candidate.pricePerSegment) * segmentCount;
+        const totalPrice = pricePerSeat * query.seatCount;
+        const departureOffsetMinutes =
+          candidate.fromDepartureOffsetMinutes ??
+          candidate.fromArrivalOffsetMinutes;
+        const arrivalOffsetMinutes =
+          candidate.toArrivalOffsetMinutes ?? candidate.toDepartureOffsetMinutes;
+
+        if (
+          departureOffsetMinutes === null ||
+          arrivalOffsetMinutes === null
+        ) {
+          throw new BadRequestException(
+            `Trip ${candidate.tripId} has incomplete route timing data`,
+          );
+        }
+
+        return {
+          tripId: candidate.tripId,
+          trainId: candidate.trainId,
+          trainNumber: candidate.trainNumber,
+          trainName: candidate.trainName,
+          routeId: candidate.routeId,
+          serviceDate: candidate.serviceDate,
+          departureTime: this.buildTripDateTime(
+            candidate.serviceDate,
+            departureOffsetMinutes,
+          ),
+          arrivalTime: this.buildTripDateTime(
+            candidate.serviceDate,
+            arrivalOffsetMinutes,
+          ),
+          fromStopOrder: candidate.fromStopOrder,
+          toStopOrder: candidate.toStopOrder,
+          availableSeatCount,
+          pricePerSeat,
+          totalPrice,
+        };
       }),
     );
 
     return matchingTrips.filter(
-      (candidate): candidate is SearchTripCandidate => candidate !== null,
+      (candidate): candidate is SearchTripResultDto => candidate !== null,
     );
   }
 
   private buildAvailableSeatsQuery(
     segment: TripSegmentResolution,
   ): SelectQueryBuilder<TrainSeat> {
+    return this.buildAvailableSeatsByOrdersQuery(
+      segment.trip.trainId,
+      segment.trip.id,
+      segment.fromStopOrder,
+      segment.toStopOrder,
+    );
+  }
+
+  private buildAvailableSeatsByOrdersQuery(
+    trainId: string,
+    tripId: string,
+    fromStopOrder: number,
+    toStopOrder: number,
+  ): SelectQueryBuilder<TrainSeat> {
     return this.trainSeatRepository
       .createQueryBuilder('seat')
-      .where('seat.train_id = :trainId', { trainId: segment.trip.trainId })
+      .where('seat.train_id = :trainId', { trainId })
       .andWhere((queryBuilder) => {
         const overlappingSeatSubquery = queryBuilder
           .subQuery()
@@ -258,9 +341,55 @@ export class TripsService {
         return `seat.id NOT IN ${overlappingSeatSubquery}`;
       })
       .setParameters({
-        tripId: segment.trip.id,
-        fromStopOrder: segment.fromStopOrder,
-        toStopOrder: segment.toStopOrder,
+        tripId,
+        fromStopOrder,
+        toStopOrder,
       });
+  }
+
+  private countAvailableSeatsByOrders(
+    trainId: string,
+    tripId: string,
+    fromStopOrder: number,
+    toStopOrder: number,
+  ) {
+    return this.buildAvailableSeatsByOrdersQuery(
+      trainId,
+      tripId,
+      fromStopOrder,
+      toStopOrder,
+    ).getCount();
+  }
+
+  private buildTripDateTime(serviceDate: string, offsetMinutes: number) {
+    const date = new Date(`${serviceDate}T00:00:00.000Z`);
+    date.setUTCMinutes(date.getUTCMinutes() + offsetMinutes);
+
+    return date.toISOString();
+  }
+
+  private async ensureStationsExist(
+    fromStationId: string,
+    toStationId: string,
+  ) {
+    const stations = await this.stationRepository.find({
+      where: [{ id: fromStationId }, { id: toStationId }],
+      select: {
+        id: true,
+      },
+    });
+    const stationIds = new Set(stations.map((station) => station.id));
+
+    if (!stationIds.has(fromStationId)) {
+      throw new NotFoundException(
+        `Station ${fromStationId} was not found`,
+      );
+    }
+
+    if (!stationIds.has(toStationId)) {
+      throw new NotFoundException(
+        `Station ${toStationId} was not found`,
+      );
+    }
   }
 }

@@ -37,6 +37,20 @@ export class SearchTripResultDto {
   serviceDate!: string;
 
   @ApiProperty({
+    type: String,
+    format: 'date-time',
+    example: '2026-05-10T00:00:00.000Z',
+  })
+  departureTime!: string;
+
+  @ApiProperty({
+    type: String,
+    format: 'date-time',
+    example: '2026-05-10T02:25:00.000Z',
+  })
+  arrivalTime!: string;
+
+  @ApiProperty({
     type: Number,
     example: 1,
   })
@@ -47,4 +61,22 @@ export class SearchTripResultDto {
     example: 4,
   })
   toStopOrder!: number;
+
+  @ApiProperty({
+    type: Number,
+    example: 13,
+  })
+  availableSeatCount!: number;
+
+  @ApiProperty({
+    type: Number,
+    example: 20,
+  })
+  pricePerSeat!: number;
+
+  @ApiProperty({
+    type: Number,
+    example: 40,
+  })
+  totalPrice!: number;
 }
