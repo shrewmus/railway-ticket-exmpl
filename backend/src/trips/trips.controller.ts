@@ -1,4 +1,4 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Controller, Get, Param, ParseUUIDPipe, Query } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
   ApiNotFoundResponse,
@@ -8,6 +8,8 @@ import {
 } from '@nestjs/swagger';
 import { SearchTripResultDto } from './dto/search-trip-result.dto';
 import { SearchTripsQueryDto } from './dto/search-trips-query.dto';
+import { TripDetailsDto } from './dto/trip-details.dto';
+import { TripSegmentQueryDto } from './dto/trip-segment-query.dto';
 import { TripsService } from './trips.service';
 
 @ApiTags('trips')
@@ -35,5 +37,28 @@ export class TripsController {
   })
   search(@Query() query: SearchTripsQueryDto) {
     return this.tripsService.searchTrips(query);
+  }
+
+  @Get(':tripId')
+  @ApiOperation({
+    summary: 'Get trip details for a selected segment',
+    description:
+      'Returns the full ordered route and a selected-segment summary for one trip.',
+  })
+  @ApiOkResponse({
+    description: 'Trip details for the selected segment.',
+    type: TripDetailsDto,
+  })
+  @ApiBadRequestResponse({
+    description: 'Invalid trip segment query parameters.',
+  })
+  @ApiNotFoundResponse({
+    description: 'Trip or one of the segment stations was not found.',
+  })
+  findOne(
+    @Param('tripId', new ParseUUIDPipe()) tripId: string,
+    @Query() query: TripSegmentQueryDto,
+  ) {
+    return this.tripsService.getTripDetails(tripId, query);
   }
 }

@@ -12,6 +12,9 @@ import {
 import { SelectQueryBuilder, Repository } from 'typeorm';
 import { SearchTripResultDto } from './dto/search-trip-result.dto';
 import { SearchTripsQueryDto } from './dto/search-trips-query.dto';
+import { TripDetailsDto } from './dto/trip-details.dto';
+import { TripRouteStopDto } from './dto/trip-route-stop.dto';
+import { TripSegmentQueryDto } from './dto/trip-segment-query.dto';
 
 export type TripSegmentResolution = {
   trip: Trip;
@@ -307,6 +310,100 @@ export class TripsService {
     );
   }
 
+  async getTripDetails(
+    tripId: string,
+    query: TripSegmentQueryDto,
+  ): Promise<TripDetailsDto> {
+    const segment = await this.resolveTripSegment(
+      tripId,
+      query.fromStationId,
+      query.toStationId,
+    );
+    const trip = await this.tripRepository.findOne({
+      where: { id: tripId },
+      relations: {
+        train: true,
+        route: true,
+      },
+    });
+
+    if (!trip) {
+      throw new NotFoundException(`Trip ${tripId} was not found`);
+    }
+
+    const routeStops = await this.getOrderedRouteStops(segment.route.id);
+    const segmentCount = segment.toStopOrder - segment.fromStopOrder;
+    const pricePerSeat = Number(trip.pricePerSegment) * segmentCount;
+    const fromStopDetails = routeStops.find(
+      (routeStop) => routeStop.stationId === segment.fromRouteStop.stationId,
+    );
+    const toStopDetails = routeStops.find(
+      (routeStop) => routeStop.stationId === segment.toRouteStop.stationId,
+    );
+
+    if (!fromStopDetails || !toStopDetails) {
+      throw new NotFoundException(
+        `Selected segment stations are not part of trip ${tripId}`,
+      );
+    }
+
+    // note: Her for MVP example use plain object assignment
+    // exists more ways to make code more readable but for now this is ok
+    // e.g. - using class-transform (plainToInstance), create more complex dto class with transformation methods, create special trasnform functions etc
+
+    return {
+      tripId: trip.id,
+      trainId: trip.trainId,
+      trainNumber: trip.train.number,
+      trainName: trip.train.name,
+      routeId: trip.routeId,
+      routeCode: trip.route.code,
+      routeName: trip.route.name,
+      serviceDate: trip.serviceDate,
+      pricePerSegment: Number(trip.pricePerSegment),
+      selectedSegment: {
+        fromStationId: fromStopDetails.stationId,
+        fromStationCode: fromStopDetails.station.code,
+        fromStationName: fromStopDetails.station.name,
+        toStationId: toStopDetails.stationId,
+        toStationCode: toStopDetails.station.code,
+        toStationName: toStopDetails.station.name,
+        fromStopOrder: segment.fromStopOrder,
+        toStopOrder: segment.toStopOrder,
+        segmentCount,
+        departureTime: this.buildStopDepartureTime(
+          trip.serviceDate,
+          fromStopDetails,
+        ),
+        arrivalTime: this.buildStopArrivalTime(
+          trip.serviceDate,
+          toStopDetails,
+        ),
+        pricePerSeat,
+      },
+      routeStops: routeStops.map((routeStop): TripRouteStopDto => ({
+        stationId: routeStop.stationId,
+        stationCode: routeStop.station.code,
+        stationName: routeStop.station.name,
+        stopOrder: routeStop.stopOrder,
+        arrivalTime:
+          routeStop.defaultArrivalOffsetMinutes === null
+            ? null
+            : this.buildTripDateTime(
+                trip.serviceDate,
+                routeStop.defaultArrivalOffsetMinutes,
+              ),
+        departureTime:
+          routeStop.defaultDepartureOffsetMinutes === null
+            ? null
+            : this.buildTripDateTime(
+                trip.serviceDate,
+                routeStop.defaultDepartureOffsetMinutes,
+              ),
+      })),
+    };
+  }
+
   private buildAvailableSeatsQuery(
     segment: TripSegmentResolution,
   ): SelectQueryBuilder<TrainSeat> {
@@ -366,6 +463,34 @@ export class TripsService {
     date.setUTCMinutes(date.getUTCMinutes() + offsetMinutes);
 
     return date.toISOString();
+  }
+
+  private buildStopArrivalTime(serviceDate: string, routeStop: RouteStop) {
+    const offsetMinutes =
+      routeStop.defaultArrivalOffsetMinutes ??
+      routeStop.defaultDepartureOffsetMinutes;
+
+    if (offsetMinutes === null) {
+      throw new BadRequestException(
+        `Route stop ${routeStop.id} does not have timing data`,
+      );
+    }
+
+    return this.buildTripDateTime(serviceDate, offsetMinutes);
+  }
+
+  private buildStopDepartureTime(serviceDate: string, routeStop: RouteStop) {
+    const offsetMinutes =
+      routeStop.defaultDepartureOffsetMinutes ??
+      routeStop.defaultArrivalOffsetMinutes;
+
+    if (offsetMinutes === null) {
+      throw new BadRequestException(
+        `Route stop ${routeStop.id} does not have timing data`,
+      );
+    }
+
+    return this.buildTripDateTime(serviceDate, offsetMinutes);
   }
 
   private async ensureStationsExist(
