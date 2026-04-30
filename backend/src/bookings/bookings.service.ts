@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Booking, BookingItem, TrainSeat, Trip } from '../database/entities';
 import { In, Repository } from 'typeorm';
@@ -99,6 +104,37 @@ export class BookingsService {
         throw new BadRequestException(
           'One or more selected seats do not belong to the trip train',
         );
+      }
+
+      const conflictingSeatIds = await bookingItemRepository
+        .createQueryBuilder('bookingItem')
+        .innerJoin(
+          Booking,
+          'booking',
+          'booking.id = bookingItem.booking_id',
+        )
+        .select('bookingItem.seat_id', 'seatId')
+        .where('booking.trip_id = :tripId', {
+          tripId: trip.id,
+        })
+        .andWhere('bookingItem.seat_id IN (:...seatIds)', {
+          seatIds: dto.seatIds,
+        })
+        .andWhere('booking.from_stop_order < :toStopOrder', {
+          toStopOrder: price.toStopOrder,
+        })
+        .andWhere('booking.to_stop_order > :fromStopOrder', {
+          fromStopOrder: price.fromStopOrder,
+        })
+        .getRawMany<{ seatId: string }>();
+
+      if (conflictingSeatIds.length > 0) {
+        throw new ConflictException({
+          message: 'One or more selected seats are no longer available',
+          conflictingSeatIds: conflictingSeatIds.map(
+            (conflict) => conflict.seatId,
+          ),
+        });
       }
 
       const booking = bookingRepository.create({

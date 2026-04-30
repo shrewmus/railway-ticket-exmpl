@@ -1,6 +1,7 @@
 import { Body, Controller, Post } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
+  ApiConflictResponse,
   ApiCreatedResponse,
   ApiOperation,
   ApiTags,
@@ -26,6 +27,9 @@ export class BookingsController {
   })
   @ApiBadRequestResponse({
     description: 'Invalid booking payload or seat selection.',
+  })
+  @ApiConflictResponse({
+    description: 'One or more selected seats are no longer available.',
   })
   create(@Body() dto: CreateBookingDto) {
     return this.bookingsService.createBooking(dto);
