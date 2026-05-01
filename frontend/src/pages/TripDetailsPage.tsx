@@ -1,9 +1,11 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { useNavigate, useParams, useSearchParams } from 'react-router'
 import { apiClient } from '../api/client'
-import { Button, Card } from '../components/ui'
+import { ApiError } from '../api/http'
+import { Button, Card, Input } from '../components/ui'
 import { appRoutes } from '../app/routes'
+import type { ApiConflictPayload } from '../api/types'
 import {
   formatPrice,
   formatStationLabel,
@@ -25,6 +27,8 @@ export function TripDetailsPage() {
   const requestedSeatCount = seatCount ? Number(seatCount) : null
   const hasRequiredSegmentParams = Boolean(tripId && fromStationId && toStationId)
   const [selectedSeatIds, setSelectedSeatIds] = useState<string[]>([])
+  const [customerName, setCustomerName] = useState('')
+  const [documentNumber, setDocumentNumber] = useState('')
 
   const tripDetailsQuery = useQuery({
     queryKey: ['trip-details', tripId, fromStationId, toStationId],
@@ -60,6 +64,25 @@ export function TripDetailsPage() {
     tripDetailsQuery.data && requestedSeatCount !== null
       ? tripDetailsQuery.data.selectedSegment.pricePerSeat * requestedSeatCount
       : null
+  const bookingMutation = useMutation({
+    mutationFn: () =>
+      apiClient.createBooking({
+        tripId: tripId!,
+        fromStationId: fromStationId!,
+        toStationId: toStationId!,
+        seatIds: selectedSeatIds,
+        customerName: customerName.trim(),
+        documentNumber: documentNumber.trim(),
+      }),
+  })
+  const bookingResult = bookingMutation.data
+  const bookingError = bookingMutation.error
+  const canSubmitBooking =
+    hasRequiredSegmentParams &&
+    hasExactSeatCountSelection &&
+    customerName.trim().length > 0 &&
+    documentNumber.trim().length > 0 &&
+    !bookingMutation.isPending
 
   function toggleSeatSelection(seatId: string) {
     setSelectedSeatIds((currentSelectedSeatIds) =>
@@ -491,11 +514,297 @@ export function TripDetailsPage() {
                     </p>
                   </div>
                 </div>
+
               </div>
             </div>
           ) : null}
         </div>
       </Card>
+
+      <Card className="p-6 sm:p-8">
+        <div className="flex flex-col gap-5">
+          <div className="flex flex-col gap-2">
+            <p className="eyebrow mb-0">Booking form</p>
+            <h2 className="text-2xl leading-tight text-[var(--text)]">
+              Purchase summary before passenger details
+            </h2>
+            <p className="max-w-3xl text-sm leading-6 text-[var(--muted)]">
+              This is the first booking-flow container. It keeps the chosen trip,
+              selected seats, seat count, and price visible before customer and
+              document inputs are introduced.
+            </p>
+          </div>
+
+          {!hasRequiredSegmentParams ? (
+            <p className="text-sm leading-6 text-[var(--danger)]">
+              Missing required route context, so the booking summary cannot be
+              prepared.
+            </p>
+          ) : tripDetailsQuery.isLoading || tripSeatsQuery.isLoading ? (
+            <p className="text-sm leading-6 text-[var(--muted)]">
+              Preparing booking summary...
+            </p>
+          ) : tripDetailsQuery.isError || tripSeatsQuery.isError ? (
+            <p className="text-sm leading-6 text-[var(--danger)]">
+              Booking summary is unavailable because trip details or seat
+              availability failed to load.
+            </p>
+          ) : bookingResult ? (
+            <div className="rounded-2xl border border-[rgba(15,118,110,0.18)] bg-[rgba(15,118,110,0.08)] p-5">
+              <div className="flex flex-col gap-3">
+                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--primary)]">
+                  Ticket bought
+                </p>
+                <h3 className="text-xl font-semibold text-[var(--text)]">
+                  Booking confirmed for {bookingResult.seatCount}{' '}
+                  {bookingResult.seatCount === 1 ? 'seat' : 'seats'}
+                </h3>
+                <div className="grid gap-2 text-sm text-[var(--muted)]">
+                  <p>
+                    Booking ID:{' '}
+                    <span className="font-semibold text-[var(--text)]">
+                      {bookingResult.bookingId}
+                    </span>
+                  </p>
+                  <p>
+                    Confirmed seats:{' '}
+                    <span className="font-semibold text-[var(--text)]">
+                      {selectedSeats.map((seat) => seat.label).join(', ') || 'none'}
+                    </span>
+                  </p>
+                  <p>
+                    Total paid:{' '}
+                    <span className="font-semibold text-[var(--text)]">
+                      {formatPrice(bookingResult.totalPrice)}
+                    </span>
+                  </p>
+                </div>
+                <div className="pt-2">
+                  <Button
+                    variant="secondary"
+                    onClick={() => navigate(searchPageUrl)}
+                  >
+                    Back to search results
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : tripDetailsQuery.data ? (
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface-alt)] p-5">
+                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">
+                  Trip summary
+                </p>
+                <div className="mt-4 grid gap-3 text-sm text-[var(--muted)]">
+                  <p>
+                    Train:{' '}
+                    <span className="font-semibold text-[var(--text)]">
+                      {tripDetailsQuery.data.trainNumber}
+                      {tripDetailsQuery.data.trainName
+                        ? ` — ${tripDetailsQuery.data.trainName}`
+                        : ''}
+                    </span>
+                  </p>
+                  <p>
+                    Segment:{' '}
+                    <span className="font-semibold text-[var(--text)]">
+                      {formatStationLabel({
+                        code: tripDetailsQuery.data.selectedSegment.fromStationCode,
+                        name: tripDetailsQuery.data.selectedSegment.fromStationName,
+                      })}{' '}
+                      to{' '}
+                      {formatStationLabel({
+                        code: tripDetailsQuery.data.selectedSegment.toStationCode,
+                        name: tripDetailsQuery.data.selectedSegment.toStationName,
+                      })}
+                    </span>
+                  </p>
+                  <p>
+                    Departure:{' '}
+                    <span className="font-semibold text-[var(--text)]">
+                      {formatTripTime(
+                        tripDetailsQuery.data.selectedSegment.departureTime,
+                      )}
+                    </span>
+                  </p>
+                  <p>
+                    Arrival:{' '}
+                    <span className="font-semibold text-[var(--text)]">
+                      {formatTripTime(
+                        tripDetailsQuery.data.selectedSegment.arrivalTime,
+                      )}
+                    </span>
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface-alt)] p-5">
+                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">
+                  Purchase state
+                </p>
+                <div className="mt-4 grid gap-3 text-sm text-[var(--muted)]">
+                  <p>
+                    Requested seats:{' '}
+                    <span className="font-semibold text-[var(--text)]">
+                      {requestedSeatCount ?? 'missing'}
+                    </span>
+                  </p>
+                  <p>
+                    Selected seats:{' '}
+                    <span className="font-semibold text-[var(--text)]">
+                      {selectedSeats.map((seat) => seat.label).join(', ') || 'none'}
+                    </span>
+                  </p>
+                  <p>
+                    Current total:{' '}
+                    <span className="font-semibold text-[var(--text)]">
+                      {formatPrice(selectedSeatTotal)}
+                    </span>
+                  </p>
+                  <p>
+                    Ready for passenger details:{' '}
+                    <span className="font-semibold text-[var(--text)]">
+                      {hasExactSeatCountSelection ? 'yes' : 'not yet'}
+                    </span>
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface-alt)] p-5 lg:col-span-2">
+                <div className="flex flex-col gap-4">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">
+                      Passenger details
+                    </p>
+                    <p className="mt-2 text-sm text-[var(--muted)]">
+                      Start the booking form with the purchaser name. Document
+                      details will be added in the next step.
+                    </p>
+                  </div>
+
+                  <label className="flex max-w-xl flex-col gap-2">
+                    <span className="text-sm font-semibold text-[var(--text)]">
+                      Customer name
+                    </span>
+                    <Input
+                      type="text"
+                      value={customerName}
+                      placeholder="Enter purchaser full name"
+                      onChange={(event) => setCustomerName(event.target.value)}
+                    />
+                  </label>
+
+                  <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
+                    <div className="flex flex-col gap-4">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">
+                          Document confirmation
+                        </p>
+                        <p className="mt-2 text-sm text-[var(--muted)]">
+                          Confirm the booking with a document number before the
+                          final purchase step is wired.
+                        </p>
+                      </div>
+
+                      <label className="flex max-w-xl flex-col gap-2">
+                        <span className="text-sm font-semibold text-[var(--text)]">
+                          Document number
+                        </span>
+                        <Input
+                          type="text"
+                          value={documentNumber}
+                          placeholder="Enter passport or ID number"
+                          onChange={(event) =>
+                            setDocumentNumber(event.target.value)
+                          }
+                        />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Button
+                      disabled={!canSubmitBooking}
+                      onClick={() => bookingMutation.mutate()}
+                    >
+                      {bookingMutation.isPending
+                        ? 'Submitting booking...'
+                        : 'Buy ticket'}
+                    </Button>
+
+                    <p className="text-sm text-[var(--muted)]">
+                      Submission requires exact seat selection, customer name,
+                      and document number.
+                    </p>
+                  </div>
+
+                  {bookingError ? (
+                    <BookingErrorMessage error={bookingError} />
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </Card>
+    </div>
+  )
+}
+
+function BookingErrorMessage({ error }: { error: Error }) {
+  if (error instanceof ApiError) {
+    if (error.status === 409) {
+      const payload = error.payload as ApiConflictPayload | null
+      const conflictingSeatIds = payload?.conflictingSeatIds ?? []
+
+      return (
+        <div className="rounded-2xl border border-[rgba(180,35,24,0.16)] bg-[rgba(180,35,24,0.06)] p-4 text-sm text-[var(--danger)]">
+          <div className="flex flex-col gap-2">
+            <p className="font-semibold">Selected seats are no longer available.</p>
+            <p>
+              Another booking may have taken one or more seats for this segment.
+              Review the seat list and choose different seats before trying again.
+            </p>
+            {conflictingSeatIds.length > 0 ? (
+              <p>
+                Conflicting seat IDs:{' '}
+                <span className="font-semibold">
+                  {conflictingSeatIds.join(', ')}
+                </span>
+              </p>
+            ) : null}
+          </div>
+        </div>
+      )
+    }
+
+    if (error.status === 400 || error.status === 404) {
+      return (
+        <div className="rounded-2xl border border-[rgba(180,35,24,0.16)] bg-[rgba(180,35,24,0.06)] p-4 text-sm text-[var(--danger)]">
+          <div className="flex flex-col gap-2">
+            <p className="font-semibold">Booking request is invalid.</p>
+            <p>{error.message}</p>
+          </div>
+        </div>
+      )
+    }
+
+    return (
+      <div className="rounded-2xl border border-[rgba(180,35,24,0.16)] bg-[rgba(180,35,24,0.06)] p-4 text-sm text-[var(--danger)]">
+        <div className="flex flex-col gap-2">
+          <p className="font-semibold">Booking request failed.</p>
+          <p>{error.message}</p>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="rounded-2xl border border-[rgba(180,35,24,0.16)] bg-[rgba(180,35,24,0.06)] p-4 text-sm text-[var(--danger)]">
+      <div className="flex flex-col gap-2">
+        <p className="font-semibold">Booking request failed.</p>
+        <p>{error.message}</p>
+      </div>
     </div>
   )
 }
