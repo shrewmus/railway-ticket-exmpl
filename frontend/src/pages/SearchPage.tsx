@@ -347,7 +347,12 @@ export function SearchPage() {
                           and seat count.
                         </p>
                         <Link
-                          to={buildTripDetailsPath(trip.tripId)}
+                          to={buildTripDetailsPath(trip.tripId, {
+                            fromStationId: submittedQuery?.fromStationId,
+                            toStationId: submittedQuery?.toStationId,
+                            serviceDate: submittedQuery?.serviceDate,
+                            seatCount: submittedQuery?.seatCount,
+                          })}
                           className="inline-flex min-h-11 items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-5 py-3 text-sm font-semibold text-[var(--text)] transition hover:bg-[var(--surface-alt)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg)]"
                         >
                           View trip
