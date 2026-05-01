@@ -93,12 +93,18 @@ export class BookingsService {
         throw new NotFoundException(`Trip ${dto.tripId} was not found`);
       }
 
-      const seats = await seatRepository.find({
-        where: {
-          id: In(dto.seatIds),
+      // Lock the requested seat rows before overlap checks so concurrent bookings for the same seat set cannot pass validation in parallel.
+      const seats = await seatRepository
+        .createQueryBuilder('seat')
+        .setLock('pessimistic_write')
+        .where('seat.id IN (:...seatIds)', {
+          seatIds: dto.seatIds,
+        })
+        .andWhere('seat.train_id = :trainId', {
           trainId: trip.trainId,
-        },
-      });
+        })
+        .orderBy('seat.id', 'ASC')
+        .getMany();
 
       if (seats.length !== dto.seatIds.length) {
         throw new BadRequestException(
